@@ -1,158 +1,224 @@
+; ---------------------------------------------------------------------------------------------------------------------
+;
+;   Simple ABACAB display demo
+;
+; ---------------------------------------------------------------------------------------------------------------------
 INCLUDE "./src/hardware.inc"
 
+; *********************************************************************************************************************
+;   Constants
+; *********************************************************************************************************************
+; Tile Constants
+DEF TILE_BLANK EQU $00
+DEF TILE_A EQU $01
+DEF TILE_B EQU $02
+DEF TILE_C EQU $03
+
+; Row/Col offsets for the tilemap (add to the base address of the tilemap to get the address of a specific tile)
+DEF ROW_OFFSET EQU $20
+DEF COL_OFFSET EQU $01
+
+; Pallette Constants
+DEF PAL_DEFAULT EQU %11100100
+
+
+
+; *********************************************************************************************************************
+;   Header / Initialization
+; *********************************************************************************************************************
 SECTION "Header", ROM0[$100]
-
-	jp EntryPoint
-
+	jp EntryPoint  ; Jump past this header block to the actual "game"
 	ds $150 - @, 0 ; Make room for the header
 
 EntryPoint:
-	; Shut down audio circuitry
-	ld a, 0
-	ld [rNR52], a
+	; Disable audio
+	ld a, 0         ; 0 = off, 80 = on
+	ld [rNR52], a   ; rNR52 is the audio control register 
 
-	; Do not turn the LCD off outside of VBlank
 WaitVBlank:
-	ld a, [rLY]
-	cp 144
-	jp c, WaitVBlank
+	ld a, [rLY]      ; rLY is the current scanline
+	cp SCRN_Y        ; compare current to the last scanline 
+	jp c, WaitVBlank ; if the comparison set the carry flag, then the comparison failed, so we're not in VBlank yet
 
 	; Turn the LCD off
-	ld a, 0
-	ld [rLCDC], a
-
-	; Copy the tile data
-	ld de, Tiles
-	ld hl, $9000
-	ld bc, TilesEnd - Tiles
+	ld a, LCDCF_OFF 
+	ld [rLCDC], a   ; rLCDC is the LCD control register
+    
 CopyTiles:
+	; Copy the tile data to VRAM
+	ld de, Tiles
+	ld hl, _VRAM9000
+	ld bc, TilesEnd - Tiles
+CopyTilesLoop:
 	ld a, [de]
 	ld [hli], a
 	inc de
 	dec bc
 	ld a, b
 	or a, c
-	jp nz, CopyTiles
+	jp nz, CopyTilesLoop
 
-	; Copy the tilemap
-	ld de, Tilemap
-	ld hl, $9800
-	ld bc, TilemapEnd - Tilemap
-CopyTilemap:
-	ld a, [de]
-	ld [hli], a
-	inc de
-	dec bc
-	ld a, b
-	or a, c
-	jp nz, CopyTilemap
+ClearTilemap:
+    ld hl, _SCRN0  ; Start of tilemap
+    ld bc, 1024 ; Countdown from 1024 to 0
+ClearTilemapLoop:
+    ld a, 0     ; Load 0 into A (have to do this because ldi doesn't accept immediate values)
+    ld [hli], a ; Write 0 to the tilemap VRAM and increment hl to point to the next tile VRAM location
+    dec bc      ; decrement the countdown
+    ld a, b     ; load the high byte of bc into A
+    or a, c     ; logical OR the high byte with the low byte. If the result is 0, then bc is 0
+    jp nz, ClearTilemapLoop ; Loop if we aren't at zero yet on the count down
 
 	; Turn the LCD on
 	ld a, LCDCF_ON | LCDCF_BGON
 	ld [rLCDC], a
 
-	; During the first (blank) frame, initialize display registers
-	ld a, %11100100
+	; During the first (blank) frame, initialize pallette 
+    ; Display intensity for each pallette color
+	ld a, PAL_DEFAULT 
 	ld [rBGP], a
 
-Done:
-	jp Done
+    ; Set wFrameCount variable to 0
+    ld a, 0
+    ld [wFrameCount], a
 
 
-SECTION "Tile data", ROM0
+    
+; *********************************************************************************************************************
+;   Main Loop
+; *********************************************************************************************************************
+Main:
+WaitForNonVBlankLoop:
+    ; Wait until it's *not* VBlank to get on a new cycle
+    ld a, [rLY] ; rLY is the current scanline
+    cp SCRN_Y   ; compare current to the last non-vblank scanline
+    jp nc, WaitForNonVBlankLoop
+WaitVBlankMainLoop:
+    ; Wait until it *is* VBlank
+	ld a, [rLY]
+	cp SCRN_Y  
+	jp c, WaitVBlankMainLoop
 
+UpdateState:
+    ld a, [wFrameCount]
+
+ShowA1:
+    ; Jump to next if not on frame 0 (if we're here, register A holds the frame count)
+    cp 0
+    jp nz, ShowB1
+
+    ; Put TILE_A at position row 8, column 7 
+    ld a, TILE_A 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 7)], a
+    jp IncrementFrameCount
+
+ShowB1:
+    ; Jump to next if not on frame 16 (if we're here, register A holds the frame count)
+    cp 16  
+    jp nz, ShowA2
+
+    ; Put TILE_B at position row 8, column 8
+    ld a, TILE_B 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 8)], a
+    jp IncrementFrameCount
+
+ShowA2:
+    ; Jump to next if not on frame 32 (if we're here, register A holds the frame count)
+    cp 32 
+    jp nz, ShowC
+
+    ; Put TILE_A at position row 8, column 9
+    ld a, TILE_A 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 9)], a
+    jp IncrementFrameCount
+
+ShowC:
+    ; Jump to next if not on frame 48 (if we're here, register A holds the frame count)
+    cp 48 
+    jp nz, ShowA3
+
+    ; Put TILE_C at position row 8, column 10
+    ld a, TILE_C 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 10)], a
+    jp IncrementFrameCount
+
+ShowA3:
+    ; Jump to next if not on frame 64 (if we're here, register A holds the frame count)
+    cp 64
+    jp nz, ShowB2
+
+    ; Put TILE_A at position row 8, column 11
+    ld a, TILE_A 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 11)], a
+    jp IncrementFrameCount
+
+ShowB2:
+    ; Jump to next if not on frame 80 (if we're here, register A holds the frame count)
+    cp 80
+    jp nz, IncrementFrameCount 
+
+    ; Put TILE_B at position row 8, column 11
+    ld a, TILE_B 
+    ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 12)], a
+    jp IncrementFrameCount
+
+IncrementFrameCount:
+    ld a, [wFrameCount]
+    inc a
+    ld [wFrameCount], a
+
+EndOfMain:
+	jp Main 
+
+; *********************************************************************************************************************
+;  Variables 
+; *********************************************************************************************************************
+Section "Variables", WRAM0[$C000]
+    wFrameCount: db     ; Rolling frame count (0-255)
+
+; *********************************************************************************************************************
+;   Static Data
+; *********************************************************************************************************************
+SECTION "Data", ROM0
 Tiles:
-	db $00,$ff, $00,$ff, $00,$ff, $00,$ff, $00,$ff, $00,$ff, $00,$ff, $00,$ff
-	db $00,$ff, $00,$80, $00,$80, $00,$80, $00,$80, $00,$80, $00,$80, $00,$80
-	db $00,$ff, $00,$7e, $00,$7e, $00,$7e, $00,$7e, $00,$7e, $00,$7e, $00,$7e
-	db $00,$ff, $00,$01, $00,$01, $00,$01, $00,$01, $00,$01, $00,$01, $00,$01
-	db $00,$ff, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00
-	db $00,$ff, $00,$7f, $00,$7f, $00,$7f, $00,$7f, $00,$7f, $00,$7f, $00,$7f
-	db $00,$ff, $03,$fc, $00,$f8, $00,$f0, $00,$e0, $20,$c0, $00,$c0, $40,$80
-	db $00,$ff, $c0,$3f, $00,$1f, $00,$0f, $00,$07, $04,$03, $00,$03, $02,$01
-	db $00,$80, $00,$80, $7f,$80, $00,$80, $00,$80, $7f,$80, $7f,$80, $00,$80
-	db $00,$7e, $2a,$7e, $d5,$7e, $2a,$7e, $54,$7e, $ff,$00, $ff,$00, $00,$00
-	db $00,$01, $00,$01, $ff,$01, $00,$01, $01,$01, $fe,$01, $ff,$01, $00,$01
-	db $00,$80, $80,$80, $7f,$80, $80,$80, $00,$80, $ff,$80, $7f,$80, $80,$80
-	db $00,$7f, $2a,$7f, $d5,$7f, $2a,$7f, $55,$7f, $ff,$00, $ff,$00, $00,$00
-	db $00,$ff, $aa,$ff, $55,$ff, $aa,$ff, $55,$ff, $fa,$07, $fd,$07, $02,$07
-	db $00,$7f, $2a,$7f, $d5,$7f, $2a,$7f, $55,$7f, $aa,$7f, $d5,$7f, $2a,$7f
-	db $00,$ff, $80,$ff, $00,$ff, $80,$ff, $00,$ff, $80,$ff, $00,$ff, $80,$ff
-	db $40,$80, $00,$80, $7f,$80, $00,$80, $00,$80, $7f,$80, $7f,$80, $00,$80
-	db $00,$3c, $02,$7e, $85,$7e, $0a,$7e, $14,$7e, $ab,$7e, $95,$7e, $2a,$7e
-	db $02,$01, $00,$01, $ff,$01, $00,$01, $01,$01, $fe,$01, $ff,$01, $00,$01
-	db $00,$ff, $80,$ff, $50,$ff, $a8,$ff, $50,$ff, $a8,$ff, $54,$ff, $a8,$ff
-	db $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80
-	db $ff,$00, $ff,$00, $ff,$00, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e
-	db $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $fe,$01
-	db $7f,$80, $ff,$80, $7f,$80, $ff,$80, $7f,$80, $ff,$80, $7f,$80, $ff,$80
-	db $ff,$00, $ff,$00, $ff,$00, $aa,$7f, $d5,$7f, $aa,$7f, $d5,$7f, $aa,$7f
-	db $f8,$07, $f8,$07, $f8,$07, $80,$ff, $00,$ff, $aa,$ff, $55,$ff, $aa,$ff
-	db $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $ff,$80, $7f,$80, $ff,$80
-	db $d5,$7f, $aa,$7f, $d5,$7f, $aa,$7f, $d5,$7f, $aa,$7f, $d5,$7f, $aa,$7f
-	db $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $eb,$3c
-	db $54,$ff, $aa,$ff, $54,$ff, $aa,$ff, $54,$ff, $aa,$ff, $54,$ff, $aa,$ff
-	db $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $00,$ff
-	db $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $2a,$ff
-	db $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $80,$ff
-	db $7f,$80, $ff,$80, $7f,$80, $ff,$80, $7f,$80, $ff,$80, $7f,$80, $aa,$ff
-	db $ff,$00, $ff,$00, $ff,$00, $ff,$00, $ff,$00, $ff,$00, $ff,$00, $2a,$ff
-	db $ff,$01, $fe,$01, $ff,$01, $fe,$01, $fe,$01, $fe,$01, $fe,$01, $80,$ff
-	db $7f,$80, $ff,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $7f,$80, $00,$ff
-	db $fe,$01, $fe,$01, $fe,$01, $fe,$01, $fe,$01, $fe,$01, $fe,$01, $80,$ff
-	db $3f,$c0, $3f,$c0, $3f,$c0, $1f,$e0, $1f,$e0, $0f,$f0, $03,$fc, $00,$ff
-	db $fd,$03, $fc,$03, $fd,$03, $f8,$07, $f9,$07, $f0,$0f, $c1,$3f, $82,$ff
-	db $55,$ff, $2a,$7e, $54,$7e, $2a,$7e, $54,$7e, $2a,$7e, $54,$7e, $00,$7e
-	db $01,$ff, $00,$01, $01,$01, $00,$01, $01,$01, $00,$01, $01,$01, $00,$01
-	db $54,$ff, $ae,$f8, $50,$f0, $a0,$e0, $60,$c0, $80,$c0, $40,$80, $40,$80
-	db $55,$ff, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00
-	db $55,$ff, $6a,$1f, $05,$0f, $02,$07, $05,$07, $02,$03, $03,$01, $02,$01
-	db $54,$ff, $80,$80, $00,$80, $80,$80, $00,$80, $80,$80, $00,$80, $00,$80
-	db $55,$ff, $2a,$1f, $0d,$07, $06,$03, $01,$03, $02,$01, $01,$01, $00,$01
-	db $55,$ff, $2a,$7f, $55,$7f, $2a,$7f, $55,$7f, $2a,$7f, $55,$7f, $00,$7f
-	db $55,$ff, $aa,$ff, $55,$ff, $aa,$ff, $55,$ff, $aa,$ff, $55,$ff, $00,$ff
-	db $15,$ff, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00, $00,$00
-	db $55,$ff, $6a,$1f, $0d,$07, $06,$03, $01,$03, $02,$01, $03,$01, $00,$01
-	db $54,$ff, $a8,$ff, $54,$ff, $a8,$ff, $50,$ff, $a0,$ff, $40,$ff, $00,$ff
-	db $00,$7e, $2a,$7e, $d5,$7e, $2a,$7e, $54,$7e, $ab,$76, $dd,$66, $22,$66
-	db $00,$7c, $2a,$7e, $d5,$7e, $2a,$7e, $54,$7c, $ff,$00, $ff,$00, $00,$00
-	db $00,$01, $00,$01, $ff,$01, $02,$01, $07,$01, $fe,$03, $fd,$07, $0a,$0f
-	db $00,$7c, $2a,$7e, $d5,$7e, $2a,$7e, $54,$7e, $ab,$7e, $d5,$7e, $2a,$7e
-	db $00,$ff, $a0,$ff, $50,$ff, $a8,$ff, $54,$ff, $a8,$ff, $54,$ff, $aa,$ff
-	db $dd,$62, $bf,$42, $fd,$42, $bf,$40, $ff,$00, $ff,$00, $f7,$08, $ef,$18
-	db $ff,$00, $ff,$00, $ff,$00, $ab,$7c, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e
-	db $f9,$07, $fc,$03, $fd,$03, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $fe,$01
-	db $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7e, $d5,$7e, $ab,$7c
-	db $f7,$18, $eb,$1c, $d7,$3c, $eb,$3c, $d5,$3e, $ab,$7e, $d5,$7e, $2a,$ff
-	db $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $fe,$01, $ff,$01, $a2,$ff
-	db $7f,$c0, $bf,$c0, $7f,$c0, $bf,$e0, $5f,$e0, $af,$f0, $57,$fc, $aa,$ff
-	db $ff,$01, $fc,$03, $fd,$03, $fc,$03, $f9,$07, $f0,$0f, $c1,$3f, $82,$ff
-	db $55,$ff, $2a,$ff, $55,$ff, $2a,$ff, $55,$ff, $2a,$ff, $55,$ff, $00,$ff
-	db $45,$ff, $a2,$ff, $41,$ff, $82,$ff, $41,$ff, $80,$ff, $01,$ff, $00,$ff
-	db $54,$ff, $aa,$ff, $54,$ff, $aa,$ff, $54,$ff, $aa,$ff, $54,$ff, $00,$ff
-	db $15,$ff, $2a,$ff, $15,$ff, $0a,$ff, $15,$ff, $0a,$ff, $01,$ff, $00,$ff
-	db $01,$ff, $80,$ff, $01,$ff, $80,$ff, $01,$ff, $80,$ff, $01,$ff, $00,$ff
+    ; Empty tile
+	dw `00000000
+	dw `00000000
+	dw `00000000
+	dw `00000000
+	dw `00000000
+	dw `00000000
+	dw `00000000
+	dw `00000000
+
+    ; Leter A
+	dw `00000000
+	dw `00333300
+	dw `00300300
+	dw `03300330
+	dw `03000030
+	dw `03333330
+	dw `03000030
+	dw `03000030
+
+    ; Letter B
+	dw `00000000
+	dw `03333000
+	dw `03000300
+	dw `03000300
+	dw `03333330
+	dw `03000030
+	dw `03000030
+	dw `03333330
+
+    ; Letter C
+	dw `00000000
+	dw `00333300
+	dw `03300330
+	dw `03000000
+	dw `03000000
+	dw `03000000
+	dw `03300330
+	dw `00333300
 TilesEnd:
 
-SECTION "Tilemap", ROM0
-
-Tilemap:
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $01, $02, $03, $01, $04, $03, $01, $05, $00, $01, $05, $00, $06, $04, $07, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $08, $09, $0a, $0b, $0c, $0d, $0b, $0e, $0f, $08, $0e, $0f, $10, $11, $12, $13, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $14, $15, $16, $17, $18, $19, $1a, $1b, $0f, $14, $1b, $0f, $14, $1c, $16, $1d, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $1e, $1f, $20, $21, $22, $23, $24, $22, $25, $1e, $22, $25, $26, $22, $27, $1d, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $01, $28, $29, $2a, $2b, $2c, $2d, $2b, $2e, $2d, $2f, $30, $2d, $31, $32, $33, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $08, $34, $0a, $0b, $11, $0a, $0b, $35, $36, $0b, $0e, $0f, $08, $37, $0a, $38, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $14, $39, $16, $17, $1c, $16, $17, $3a, $3b, $17, $1b, $0f, $14, $3c, $16, $1d, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $1e, $3d, $3e, $3f, $22, $27, $21, $1f, $20, $21, $22, $25, $1e, $22, $40, $1d, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $41, $42, $43, $44, $30, $33, $41, $45, $43, $41, $30, $43, $41, $30, $33, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-	db $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00,  0,0,0,0,0,0,0,0,0,0,0,0
-TilemapEnd:
