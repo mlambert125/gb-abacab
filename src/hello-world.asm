@@ -14,6 +14,8 @@ DEF TILE_A EQU $01
 DEF TILE_B EQU $02
 DEF TILE_C EQU $03
 
+DEF OBJ_TILE_BALL EQU $00
+
 ; Row/Col offsets for the tilemap (add to the base address of the tilemap to get the address of a specific tile)
 DEF ROW_OFFSET EQU $20
 DEF COL_OFFSET EQU $01
@@ -58,6 +60,20 @@ EntryPoint:
 	or a, c
 	jp nz, .CopyTilesLoop
 
+.CopyObjectTiles:
+    ; Copy the object tile data to VRAM
+    ld de, ObjectTiles
+    ld hl, _VRAM8000
+    ld bc, ObjectTilesEnd - ObjectTiles
+.CopyObjectTilesLoop:
+    ld a, [de]
+    ld [hli], a
+    inc de
+    dec bc
+    ld a, b
+    or a, c
+    jp nz, .CopyObjectTilesLoop
+
 .ClearTilemap:
     ld hl, _SCRN0  ; Start of tilemap
     ld bc, 1024 ; Countdown from 1024 to 0
@@ -69,16 +85,27 @@ EntryPoint:
     or a, c     ; logical OR the high byte with the low byte. If the result is 0, then bc is 0
     jp nz, .ClearTilemapLoop ; Loop if we aren't at zero yet on the count down
 
+.ClearOAM:
+    ld a, 0
+    ld b, 160
+    ld hl, _OAMRAM
+.ClearOAMLoop:
+    ld [hli], a
+    dec b
+    jp nz, .ClearOAMLoop
+
 .TurnOnLCD:
 	; Turn the LCD on
-	ld a, LCDCF_ON | LCDCF_BGON
+	ld a, LCDCF_ON | LCDCF_BGON | LCDCF_OBJON 
 	ld [rLCDC], a
 
 .InitPallette:
-	; During the first (blank) frame, initialize pallette 
-    ; Display intensity for each pallette color
+	; During the first (blank) frame, initialize palettes
+    ; Display intensity for each palette color
 	ld a, PAL_DEFAULT 
 	ld [rBGP], a
+    ld [rOBP0], a
+    ld [rOBP1], a
 
 .InitFrameCount:
     ; Set wFrameCount variable to 0
@@ -101,11 +128,6 @@ Main:
 	ld a, [rLY]
 	cp SCRN_Y  
 	jp c, .WaitVBlankMainLoop
-
-; if title done, jump back to main (nothing really to do here)
-    ld a, [wTitleDone]
-    cp 1
-    jp z, Main   
 
 .UpdateState:
     ld a, [wFrameCount]
@@ -163,17 +185,23 @@ Main:
 .ShowB2:
     ; Jump to next if not on frame 80 (if we're here, register A holds the frame count)
     cp 80
-    jp nz, .IncrementFrameCount 
+    jp nz, .ShowObject
 
     ; Put TILE_B at position row 8, column 12
     ld a, TILE_B 
     ld [_SCRN0 + (ROW_OFFSET * 8) + (COL_OFFSET * 12)], a
 
-    ; Set title done
-    ld a, 1
-    ld [wTitleDone], a
+.ShowObject:
+    ; Put OBJ_TILE_BALL at pixel frameCount, frameCount 
+    ; add frameCount to a
+    ld a, [wFrameCount]
+    ld [_OAMRAM + 0], a
+    ld [_OAMRAM + 1], a 
+    ld a, OBJ_TILE_BALL 
+    ld [_OAMRAM + 2], a
+    ld a, 0
+    ld [_OAMRAM + 3], a
 
-    jp .IncrementFrameCount
 
 .IncrementFrameCount:
     ld a, [wFrameCount]
@@ -190,7 +218,6 @@ Main:
 ; *********************************************************************************************************************
 Section "Variables", WRAM0[$C000]
     wFrameCount: db     ; Rolling frame count (0-255)
-    wTitleDone: db      ; Flag to indicate if the title screen is done
 
 
 
@@ -240,3 +267,14 @@ Tiles:
 	dw `00333300
 TilesEnd:
 
+ObjectTiles:
+    ; Ball 
+	dw `00000000
+	dw `00033000
+	dw `00333300
+	dw `03333330
+	dw `03333330
+	dw `00333300
+	dw `00033000
+	dw `00000000
+ObjectTilesEnd:
